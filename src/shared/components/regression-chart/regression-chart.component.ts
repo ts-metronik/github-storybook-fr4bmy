@@ -12,7 +12,7 @@ import { EventEmitter, Input, Output } from '@angular/core';
 import { AfterViewInit, Component, OnInit } from '@angular/core';
 import * as Highcharts from 'highcharts/highcharts';
 import * as lodash from 'lodash';
-import * as moment from 'moment';
+import moment from 'moment';
 import { filterUndefined } from '../../lib/rxjs.utils';
 import { MOMENT_SORTABLE } from '../../constants';
 
@@ -589,28 +589,6 @@ function linear_regression(xyr: [number, number, number][]) {
   a = (sumr * sumxy - sumx * sumy) / (sumr * sumx2 - sumx * sumx);
 
   return [a, b];
-}
-
-function split(arr: any[], a: string | number, b: string | number) {
-  const x = [];
-  const y = [];
-
-  arr.forEach((item) => {
-    x.push(item[a]);
-    y.push(item[b]);
-  });
-
-  return [x, y];
-}
-
-function join(x: any[], y: any[]) {
-  const reult = [];
-
-  x.forEach((val, i) => {
-    reult.push([val, y[i]]);
-  });
-
-  return reult;
 }
 
 export function pointId(p: InputData) {

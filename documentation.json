@@ -2,6 +2,56 @@
     "pipes": [],
     "interfaces": [
         {
+            "name": "InputData",
+            "id": "interface-InputData-d79ad9c3e6c57ad7d1d5da1b1965091dfefde8f492f5e96bc43d64f7dfe16c2a4aded081cf5007c82a1ffd7a0c116d3b0aee24be8dcf04111da0c0976593759d",
+            "file": "src/shared/components/regression-chart/regression-chart.component.ts",
+            "deprecated": false,
+            "deprecationMessage": "",
+            "type": "interface",
+            "sourceCode": "import {\r\n  map,\r\n  takeUntil,\r\n  tap,\r\n  switchMap,\r\n  distinctUntilChanged,\r\n  skip,\r\n} from 'rxjs/operators';\r\nimport { combineLatest, of, Subject } from 'rxjs';\r\nimport { BehaviorSubject } from 'rxjs';\r\nimport { EventEmitter, Input, Output } from '@angular/core';\r\nimport { AfterViewInit, Component, OnInit } from '@angular/core';\r\nimport * as Highcharts from 'highcharts/highcharts';\r\nimport * as lodash from 'lodash';\r\nimport * as moment from 'moment';\r\nimport { filterUndefined } from '../../lib/rxjs.utils';\r\nimport { MOMENT_SORTABLE } from '../../constants';\r\n\r\n@Component({\r\n  selector: 'app-regression-chart',\r\n  templateUrl: './regression-chart.component.html',\r\n  styleUrls: ['./regression-chart.component.scss'],\r\n})\r\nexport class RegressionChartComponent implements OnInit, AfterViewInit {\r\n  @Input() set data(data: InputData[]) {\r\n    this.data$.next(lodash.cloneDeep(data));\r\n  }\r\n\r\n  get data() {\r\n    return this.data$.value;\r\n  }\r\n\r\n  @Input() set disabledPoint(data: InputData) {\r\n    this.disabledPoint$.next(data);\r\n  }\r\n  get disabledPoint() {\r\n    return this.disabledPoint$.value;\r\n  }\r\n  @Input() set disabledPoints(data: InputData[]) {\r\n    this.disabledPoints$.next(data);\r\n  }\r\n  get disabledPoints() {\r\n    return this.disabledPoints$.value;\r\n  }\r\n\r\n  @Output() disabledPointChange = new EventEmitter();\r\n  @Output() disabledPointsChange = new EventEmitter();\r\n\r\n  readonly instanceId = Math.round(Math.random() * (1000000 + 1));\r\n  readonly chartId = 'regression-chart-' + this.instanceId;\r\n  chartInstance = undefined;\r\n\r\n  readonly data$ = new BehaviorSubject<InputData[]>([]);\r\n  readonly disabledPoint$ = new BehaviorSubject<InputData>(undefined);\r\n  readonly disabledPoints$ = new BehaviorSubject<InputData[]>([]);\r\n  readonly disabledPointsMap$ = new BehaviorSubject<Map<string, InputData>>(\r\n    new Map()\r\n  );\r\n  readonly destroyed$ = new Subject();\r\n\r\n  constructor() {\r\n    this.disabledPoint$\r\n      .pipe(\r\n        takeUntil(this.destroyed$),\r\n        filterUndefined(),\r\n        map(\r\n          (dp) => [dp, this.disabledPoints$.value] as [InputData, InputData[]]\r\n        )\r\n      )\r\n      .subscribe({\r\n        next: ([dp, dps]) => {\r\n          const existing = dps.find(\r\n            (p) =>\r\n              p.x === dp.x && p.y === dp.y && p.utcTimestamp === dp.utcTimestamp\r\n          );\r\n\r\n          if (existing) {\r\n            if (dp.disabled) {\r\n              existing.disabled = true;\r\n            } else {\r\n              dps = dps.filter((p) => p !== existing);\r\n            }\r\n          } else if (dp.disabled) {\r\n            dps.push(dp);\r\n          }\r\n\r\n          this.disabledPoints$.next(dps);\r\n          this.disabledPointChange.emit(dp);\r\n        },\r\n      });\r\n\r\n    this.disabledPoints$\r\n      .pipe(\r\n        skip(1), // Skip initial empty array\r\n        tap((dps) => {\r\n          const newMap = new Map();\r\n          dps.forEach((dp) => {\r\n            newMap.set(pointId(dp), dp);\r\n          });\r\n\r\n          this.disabledPointsMap$.next(newMap);\r\n        }),\r\n        switchMap((dps) =>\r\n          combineLatest([\r\n            of(dps),\r\n            this.disabledPointsMap$,\r\n            this.data$.pipe(distinctUntilChanged()),\r\n          ])\r\n        ),\r\n        takeUntil(this.destroyed$)\r\n      )\r\n      .subscribe({\r\n        next: ([dps, dpsMap, data]) => {\r\n          data.forEach((d) => {\r\n            const dp = dpsMap.get(pointId(d));\r\n\r\n            if (dp) {\r\n              d.disabled = !!dp.disabled;\r\n            } else {\r\n              if (d.disabled) {\r\n                delete d.disabled;\r\n              }\r\n            }\r\n          });\r\n\r\n          this.data$.next(data);\r\n          this.disabledPointsChange.emit(dps);\r\n        },\r\n      });\r\n\r\n    this.data$.pipe(takeUntil(this.destroyed$)).subscribe({\r\n      next: () => {\r\n        this.createChart();\r\n      },\r\n    });\r\n  }\r\n\r\n  ngOnInit() {}\r\n\r\n  ngAfterViewInit() {\r\n    this.createChart();\r\n  }\r\n\r\n  ngOnDestroy(): void {\r\n    //Called once, before the instance is destroyed.\r\n    //Add 'implements OnDestroy' to the class.\r\n    this.destroyed$.next();\r\n    this.destroyed$.complete();\r\n  }\r\n\r\n  createChart() {\r\n    const data = this.data;\r\n\r\n    const {\r\n      result_values,\r\n      max_x,\r\n      max_y,\r\n      min_x,\r\n      min_y,\r\n      max_x_before_length,\r\n      max_x_after_length,\r\n      max_y_before_length,\r\n      max_y_after_length,\r\n    } = findLineByLeastSquares(data);\r\n\r\n    this.settings.xAxis = {\r\n      ...this.settings.xAxis,\r\n      max: max_x,\r\n      min: min_x,\r\n    };\r\n    this.settings.yAxis = {\r\n      ...this.settings.yAxis,\r\n      max: max_y,\r\n      min: min_y,\r\n      startOnTick: false,\r\n    };\r\n\r\n    let lineData = [];\r\n\r\n    (result_values || []).forEach((v) => {\r\n      lineData.push([v.x, v.y]);\r\n    });\r\n\r\n    this.lineSettings.data = result_values;\r\n    this.settings.series = [this.lineSettings];\r\n    //this.settings.series[1].data = data;\r\n\r\n    this.data.forEach((d) => {\r\n      //let date = new Date(d.utcTimestamp);\r\n      //let name = `${date.getFullYear()}-${date.getMonth()}-${date.getDate()} ${date.getHours()}:${date.getMinutes()}`;\r\n      this.settings.series.push({\r\n        type: 'scatter',\r\n        id:\r\n          d.utcTimestamp instanceof Date\r\n            ? d.utcTimestamp.toISOString()\r\n            : d.utcTimestamp,\r\n        name: this.getName(\r\n          d,\r\n          max_x_before_length,\r\n          max_x_after_length,\r\n          max_y_before_length,\r\n          max_y_after_length\r\n        ),\r\n        data: [[d.x, d.y]],\r\n        marker: {\r\n          radius: 3,\r\n          enabled: true,\r\n        },\r\n        //selected: false, //!d.disabled,\r\n        visible: !d.disabled,\r\n        events: {\r\n          hide: ((eve) => {\r\n            const series = eve.target as any as Highcharts.Series;\r\n\r\n            this.disablePoint(series.name);\r\n\r\n            this.createChart();\r\n\r\n            // const { result_values } = findLineByLeastSquares(data);\r\n\r\n            // let lineData = [];\r\n\r\n            // result_values.forEach((v) => {\r\n            //   lineData.push([v.x, v.y]);\r\n            // });\r\n\r\n            //series.setData(lineData);\r\n          }) as Highcharts.SeriesHideCallbackFunction,\r\n          show: ((eve) => {\r\n            const series = eve.target as any as Highcharts.Series;\r\n\r\n            this.enablePoint(series.name);\r\n\r\n            this.createChart();\r\n\r\n            // const { result_values } = findLineByLeastSquares(data);\r\n\r\n            // let lineData = [];\r\n\r\n            // result_values.forEach((v) => {\r\n            //   lineData.push([v.x, v.y]);\r\n            // });\r\n\r\n            //series.setData(lineData);\r\n          }) as Highcharts.SeriesShowCallbackFunction,\r\n\r\n          click: ((eve) => {\r\n            if (!eve.point || !eve.point.series) {\r\n              return;\r\n            }\r\n            const series = eve.point.series;\r\n\r\n            this.disablePoint(series.name);\r\n            this.createChart();\r\n          }) as Highcharts.SeriesClickCallbackFunction,\r\n        },\r\n      });\r\n    });\r\n\r\n    try {\r\n      this.chartInstance = Highcharts.chart(\r\n        this.chartId,\r\n        this.settings,\r\n        (cb) => {\r\n          console.debug(\r\n            new Date().toISOString(),\r\n            ' - Reghression chart creation callback ',\r\n            this.chartId,\r\n            cb\r\n          );\r\n        }\r\n      );\r\n    } catch (e) {\r\n      console.error('Reghression chart -- failed to create component', e);\r\n    }\r\n  }\r\n\r\n  getName(\r\n    d: InputData,\r\n    xLengthBef?: number,\r\n    xLengthAft?: number,\r\n    yLengthBef?: number,\r\n    yLengthAft?: number\r\n  ) {\r\n    const [xBef, xAft] = (d.x + '.').split('.');\r\n    const [yBef, yAft] = (d.y + '.').split('.');\r\n    return `<pre>${moment(d.utcTimestamp).format(\r\n      MOMENT_SORTABLE\r\n    )}</pre> &emsp; ${getSpaces(xBef, xLengthBef, '&nbsp; ')} <span>${\r\n      d.x\r\n    }</span> &ensp; ${getSpaces(xAft, xLengthAft, '&nbsp; ')}${getSpaces(\r\n      yBef,\r\n      yLengthBef,\r\n      '&nbsp; '\r\n    )} <span>${d.y}</span>`;\r\n  }\r\n\r\n  disablePoint(name: string) {\r\n    const point = this.data.find((d) => this.getName(d) === name);\r\n    point.disabled = true;\r\n\r\n    this.disabledPoint$.next(point);\r\n  }\r\n  enablePoint(name: string) {\r\n    const point = this.data.find((d) => this.getName(d) === name);\r\n    delete point.disabled;\r\n\r\n    this.disabledPoint$.next(point);\r\n  }\r\n\r\n  lineSettings: Highcharts.SeriesLineOptions = {\r\n    type: 'line',\r\n    name: 'Regression Line',\r\n    data: [\r\n      [0, 1.11],\r\n      [5, 4.51],\r\n    ],\r\n    marker: {\r\n      enabled: false,\r\n    },\r\n    states: {\r\n      hover: {\r\n        lineWidth: 0,\r\n      },\r\n    },\r\n    //enableMouseTracking: false,\r\n  };\r\n\r\n  settings: Highcharts.Options = {\r\n    title: {\r\n      text: 'Scatter plot with regression line',\r\n    },\r\n    xAxis: {\r\n      min: -0.5,\r\n      max: 5.5,\r\n    },\r\n    yAxis: {\r\n      min: 0,\r\n    },\r\n    series: [\r\n      {\r\n        type: 'line',\r\n        name: 'Regression Line',\r\n        data: [\r\n          [0, 1.11],\r\n          [5, 4.51],\r\n        ],\r\n        marker: {\r\n          enabled: false,\r\n        },\r\n        states: {\r\n          hover: {\r\n            lineWidth: 0,\r\n          },\r\n        },\r\n        enableMouseTracking: false,\r\n      },\r\n      // {\r\n      //   type: 'scatter',\r\n      //   name: 'Observations',\r\n      //   data: [1, 1.5, 2.8, 3.5, 3.9, 4.2],\r\n      //   marker: {\r\n      //     //radius: 4,\r\n      //   },\r\n      // },\r\n    ],\r\n    rangeSelector: {\r\n      enabled: true,\r\n    },\r\n    chart: {\r\n      zooming: {\r\n        type: 'xy',\r\n      },\r\n    },\r\n  };\r\n}\r\n\r\nfunction addSpaces(n, length: number, space: string = ' ') {\r\n  return n + getSpaces(n, length, space);\r\n}\r\n\r\nfunction getSpaces(n, length: number, space: string = ' ') {\r\n  const oldL = (n + '').length;\r\n  const diff = length - oldL;\r\n\r\n  if (diff > 0) {\r\n    return Array.from(Array(diff))\r\n      .map(() => space)\r\n      .join('');\r\n  }\r\n\r\n  return '';\r\n}\r\n\r\nfunction findLineByLeastSquares(\r\n  values: { x: number; y: number; disabled?: boolean }[]\r\n) {\r\n  var sum_x = 0;\r\n  var sum_y = 0;\r\n  var sum_xy = 0;\r\n  var sum_xx = 0;\r\n  var count = 0;\r\n\r\n  let max_x = undefined;\r\n  let max_y = undefined;\r\n  let min_x = undefined;\r\n  let min_y = undefined;\r\n\r\n  let max_x_before_length = undefined;\r\n  let max_x_after_length = undefined;\r\n  let max_y_before_length = undefined;\r\n  let max_y_after_length = undefined;\r\n\r\n  /*\r\n   * We'll use those variables for faster read/write access.\r\n   */\r\n  var x = 0;\r\n  var y = 0;\r\n  var values_length = values.length;\r\n\r\n  /*\r\n   * Nothing to do.\r\n   */\r\n  if (values_length === 0) {\r\n    return {\r\n      result_values,\r\n      m,\r\n      b,\r\n      sum_x,\r\n      sum_y,\r\n      sum_xx,\r\n      sum_xy,\r\n      count,\r\n\r\n      max_x,\r\n      max_y,\r\n      min_x,\r\n      min_y,\r\n\r\n      max_x_before_length,\r\n      max_x_after_length,\r\n      max_y_before_length,\r\n      max_y_after_length,\r\n    };\r\n  }\r\n\r\n  /*\r\n   * Calculate the sum for each of the parts necessary.\r\n   */\r\n  for (var v = 0; v < values_length; v++) {\r\n    if (values[v].disabled) {\r\n      continue;\r\n    }\r\n    x = values[v].x;\r\n    y = values[v].y;\r\n    sum_x += x;\r\n    sum_y += y;\r\n    sum_xx += x * x;\r\n    sum_xy += x * y;\r\n    count++;\r\n\r\n    if (max_x === undefined || x > max_x) {\r\n      max_x = x;\r\n    }\r\n    if (max_y === undefined || y > max_y) {\r\n      max_y = y;\r\n    }\r\n    if (min_x === undefined || x < min_x) {\r\n      min_x = x;\r\n    }\r\n    if (min_y === undefined || y < min_y) {\r\n      min_y = y;\r\n    }\r\n\r\n    const [xBefore, xAfter] = (x + '.').split('.');\r\n    if (\r\n      max_x_before_length === undefined ||\r\n      xBefore.length > max_x_before_length\r\n    ) {\r\n      max_x_before_length = xBefore.length;\r\n    }\r\n    if (\r\n      max_x_after_length === undefined ||\r\n      xAfter.length > max_x_after_length\r\n    ) {\r\n      max_x_after_length = xAfter.length;\r\n    }\r\n    const [yBefore, yAfter] = (y + '.').split('.');\r\n    if (\r\n      max_y_before_length === undefined ||\r\n      yBefore.length > max_y_before_length\r\n    ) {\r\n      max_y_before_length = yBefore.length;\r\n    }\r\n    if (\r\n      max_y_after_length === undefined ||\r\n      yAfter.length > max_y_after_length\r\n    ) {\r\n      max_y_after_length = yAfter.length;\r\n    }\r\n  }\r\n\r\n  /*\r\n   * Calculate m and b for the formular:\r\n   * y = x * m + b\r\n   */\r\n  var m = (count * sum_xy - sum_x * sum_y) / (count * sum_xx - sum_x * sum_x);\r\n  var b = sum_y / count - (m * sum_x) / count;\r\n\r\n  /*\r\n   * We will make the x and y result line now\r\n   */\r\n  var result_values: { x: number; y: number; disabled?: boolean }[] = [];\r\n\r\n  for (var v = 0; v < values_length; v++) {\r\n    x = values[v].x;\r\n    y = x * m + b;\r\n    let result = { x, y };\r\n    if (values[v].disabled) {\r\n      (result as any).disabled = true;\r\n    }\r\n\r\n    result_values.push({ x, y });\r\n  }\r\n\r\n  return {\r\n    result_values,\r\n    m,\r\n    b,\r\n    sum_x,\r\n    sum_y,\r\n    sum_xx,\r\n    sum_xy,\r\n    count,\r\n\r\n    max_x,\r\n    max_y,\r\n    min_x,\r\n    min_y,\r\n\r\n    max_x_before_length,\r\n    max_x_after_length,\r\n    max_y_before_length,\r\n    max_y_after_length,\r\n  };\r\n}\r\n\r\n//take an array of triplets (x, y, r) where r is the weight of the (x, y) data point\r\n// and return [a, b] such that Y = a*X + b approximate the data.\r\n// return (a, b) that minimize\r\n// sum_i r_i * (a*x_i+b - y_i)^2\r\nfunction linear_regression(xyr: [number, number, number][]) {\r\n  var i,\r\n    x,\r\n    y,\r\n    r,\r\n    sumx = 0,\r\n    sumy = 0,\r\n    sumx2 = 0,\r\n    sumy2 = 0,\r\n    sumxy = 0,\r\n    sumr = 0,\r\n    a,\r\n    b;\r\n\r\n  for (i = 0; i < xyr.length; i++) {\r\n    // this is our data pair\r\n    x = xyr[i][0];\r\n    y = xyr[i][1];\r\n\r\n    // this is the weight for that pair\r\n    // set to 1 (and simplify code accordingly, ie, sumr becomes xy.length) if weighting is not needed\r\n    r = xyr[i][2] || 1;\r\n\r\n    // consider checking for NaN in the x, y and r variables here\r\n    // (add a continue statement in that case)\r\n\r\n    sumr += r;\r\n    sumx += r * x;\r\n    sumx2 += r * (x * x);\r\n    sumy += r * y;\r\n    sumy2 += r * (y * y);\r\n    sumxy += r * (x * y);\r\n  }\r\n\r\n  // note: the denominator is the variance of the random variable X\r\n  // the only case when it is 0 is the degenerate case X==constant\r\n  b = (sumy * sumx2 - sumx * sumxy) / (sumr * sumx2 - sumx * sumx);\r\n  a = (sumr * sumxy - sumx * sumy) / (sumr * sumx2 - sumx * sumx);\r\n\r\n  return [a, b];\r\n}\r\n\r\nfunction split(arr: any[], a: string | number, b: string | number) {\r\n  const x = [];\r\n  const y = [];\r\n\r\n  arr.forEach((item) => {\r\n    x.push(item[a]);\r\n    y.push(item[b]);\r\n  });\r\n\r\n  return [x, y];\r\n}\r\n\r\nfunction join(x: any[], y: any[]) {\r\n  const reult = [];\r\n\r\n  x.forEach((val, i) => {\r\n    reult.push([val, y[i]]);\r\n  });\r\n\r\n  return reult;\r\n}\r\n\r\nexport function pointId(p: InputData) {\r\n  return `${p.x}-${p.y}-${p.utcTimestamp}`;\r\n}\r\n\r\nexport interface InputData {\r\n  x: number;\r\n  y: number;\r\n  utcTimestamp: string | Date;\r\n  disabled?: boolean;\r\n}\r\n\r\nexport const dataExample = [\r\n  {\r\n    x: 291643.8125,\r\n    y: -516.95822983851352,\r\n    utcTimestamp: '2022-01-01T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 306358.09375,\r\n    y: -28.599697280958903,\r\n    utcTimestamp: '2022-01-02T00:00:00.0000000Z',\r\n    disabled: true,\r\n  },\r\n  {\r\n    x: 294482.1875,\r\n    y: 17.449047584863134,\r\n    utcTimestamp: '2022-01-03T00:00:00.0000000Z',\r\n    disabled: true,\r\n  },\r\n  {\r\n    x: 295200.8125,\r\n    y: -16.290651928651304,\r\n    utcTimestamp: '2022-01-04T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 304980.15625,\r\n    y: -36.33268860010258,\r\n    utcTimestamp: '2022-01-05T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 290823.9375,\r\n    y: 72.94667753439074,\r\n    utcTimestamp: '2022-01-06T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 302826.71875,\r\n    y: -31.56637421212807,\r\n    utcTimestamp: '2022-01-07T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 277571.125,\r\n    y: 59.40460890416173,\r\n    utcTimestamp: '2022-01-08T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 282386.03125,\r\n    y: 55.874029432691806,\r\n    utcTimestamp: '2022-01-09T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 328780.15625,\r\n    y: -34.4693497990958,\r\n    utcTimestamp: '2022-01-10T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 294187.09375,\r\n    y: -1.3032278265938184,\r\n    utcTimestamp: '2022-01-11T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 312394.34375,\r\n    y: -6.911932716158221,\r\n    utcTimestamp: '2022-01-12T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 312601.3125,\r\n    y: -9.003792625475462,\r\n    utcTimestamp: '2022-01-13T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 317157.125,\r\n    y: -40.188484005100364,\r\n    utcTimestamp: '2022-01-14T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 312196.5,\r\n    y: -48.21375061682075,\r\n    utcTimestamp: '2022-01-15T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 320370.3125,\r\n    y: -47.948673718681555,\r\n    utcTimestamp: '2022-01-16T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 281944.6875,\r\n    y: 54.996767992704434,\r\n    utcTimestamp: '2022-01-17T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 318679.4375,\r\n    y: -47.45671790219554,\r\n    utcTimestamp: '2022-01-18T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 303753.3125,\r\n    y: -13.918129540828733,\r\n    utcTimestamp: '2022-01-19T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 298511.1875,\r\n    y: 24.277307159815837,\r\n    utcTimestamp: '2022-01-20T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 303621.40625,\r\n    y: -45.95973060159068,\r\n    utcTimestamp: '2022-01-21T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 288204.78125,\r\n    y: 11.478569981989047,\r\n    utcTimestamp: '2022-01-22T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 331921.0625,\r\n    y: -106.94544040681629,\r\n    utcTimestamp: '2022-01-23T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 307386.34375,\r\n    y: -1.5602052418826324,\r\n    utcTimestamp: '2022-01-24T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 297215.5,\r\n    y: -32.4862725145919,\r\n    utcTimestamp: '2022-01-25T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 300953.8125,\r\n    y: -41.90986370439141,\r\n    utcTimestamp: '2022-01-26T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 306011.34375,\r\n    y: -18.805902012859214,\r\n    utcTimestamp: '2022-01-27T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 300762.90625,\r\n    y: -8.057343453595667,\r\n    utcTimestamp: '2022-01-28T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 314642.6875,\r\n    y: 22.276470017752782,\r\n    utcTimestamp: '2022-01-29T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 314995.71875,\r\n    y: -0.9243983099799454,\r\n    utcTimestamp: '2022-01-30T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 304538.53125,\r\n    y: -31.269631863015626,\r\n    utcTimestamp: '2022-01-31T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 308073.40625,\r\n    y: -29.802443820817736,\r\n    utcTimestamp: '2022-02-01T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 310857.375,\r\n    y: 2.0860303818469492,\r\n    utcTimestamp: '2022-02-02T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 292309.28125,\r\n    y: -8.847192482364672,\r\n    utcTimestamp: '2022-02-03T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 293479.625,\r\n    y: 44.94728582327022,\r\n    utcTimestamp: '2022-02-04T00:00:00.0000000Z',\r\n  },\r\n];\r\n",
+            "properties": [
+                {
+                    "name": "disabled",
+                    "deprecated": false,
+                    "deprecationMessage": "",
+                    "type": "boolean",
+                    "optional": true,
+                    "description": "",
+                    "line": 624
+                },
+                {
+                    "name": "utcTimestamp",
+                    "deprecated": false,
+                    "deprecationMessage": "",
+                    "type": "string | Date",
+                    "optional": false,
+                    "description": "",
+                    "line": 623
+                },
+                {
+                    "name": "x",
+                    "deprecated": false,
+                    "deprecationMessage": "",
+                    "type": "number",
+                    "optional": false,
+                    "description": "",
+                    "line": 621
+                },
+                {
+                    "name": "y",
+                    "deprecated": false,
+                    "deprecationMessage": "",
+                    "type": "number",
+                    "optional": false,
+                    "description": "",
+                    "line": 622
+                }
+            ],
+            "indexSignatures": [],
+            "kind": 165,
+            "methods": []
+        },
+        {
             "name": "User",
             "id": "interface-User-9c7e5f1bbbab702cb032307d130876cb68969b0cd4eedef32a0c8cad8081a54e5f8f577ed6ad4539c1b99a1d246cb34031d198c2ea8eba440e64e91b14f01fdc",
             "file": "src/stories/User.ts",
@@ -338,6 +388,525 @@
                 }
             ],
             "stylesData": ""
+        },
+        {
+            "name": "RegressionChartComponent",
+            "id": "component-RegressionChartComponent-d79ad9c3e6c57ad7d1d5da1b1965091dfefde8f492f5e96bc43d64f7dfe16c2a4aded081cf5007c82a1ffd7a0c116d3b0aee24be8dcf04111da0c0976593759d",
+            "file": "src/shared/components/regression-chart/regression-chart.component.ts",
+            "encapsulation": [],
+            "entryComponents": [],
+            "inputs": [],
+            "outputs": [],
+            "providers": [],
+            "selector": "app-regression-chart",
+            "styleUrls": [
+                "./regression-chart.component.scss"
+            ],
+            "styles": [],
+            "templateUrl": [
+                "./regression-chart.component.html"
+            ],
+            "viewProviders": [],
+            "inputsClass": [
+                {
+                    "name": "data",
+                    "deprecated": false,
+                    "deprecationMessage": "",
+                    "line": 25,
+                    "type": "InputData[]",
+                    "decorators": []
+                },
+                {
+                    "name": "disabledPoint",
+                    "deprecated": false,
+                    "deprecationMessage": "",
+                    "line": 33,
+                    "type": "InputData",
+                    "decorators": []
+                },
+                {
+                    "name": "disabledPoints",
+                    "deprecated": false,
+                    "deprecationMessage": "",
+                    "line": 39,
+                    "type": "InputData[]",
+                    "decorators": []
+                }
+            ],
+            "outputsClass": [
+                {
+                    "name": "disabledPointChange",
+                    "defaultValue": "new EventEmitter()",
+                    "deprecated": false,
+                    "deprecationMessage": "",
+                    "line": 46,
+                    "type": "EventEmitter"
+                },
+                {
+                    "name": "disabledPointsChange",
+                    "defaultValue": "new EventEmitter()",
+                    "deprecated": false,
+                    "deprecationMessage": "",
+                    "line": 47,
+                    "type": "EventEmitter"
+                }
+            ],
+            "propertiesClass": [
+                {
+                    "name": "chartId",
+                    "defaultValue": "'regression-chart-' + this.instanceId",
+                    "deprecated": false,
+                    "deprecationMessage": "",
+                    "type": "",
+                    "optional": false,
+                    "description": "",
+                    "line": 50,
+                    "modifierKind": [
+                        144
+                    ]
+                },
+                {
+                    "name": "chartInstance",
+                    "defaultValue": "undefined",
+                    "deprecated": false,
+                    "deprecationMessage": "",
+                    "type": "",
+                    "optional": false,
+                    "description": "",
+                    "line": 51
+                },
+                {
+                    "name": "data$",
+                    "defaultValue": "new BehaviorSubject<InputData[]>([])",
+                    "deprecated": false,
+                    "deprecationMessage": "",
+                    "type": "",
+                    "optional": false,
+                    "description": "",
+                    "line": 53,
+                    "modifierKind": [
+                        144
+                    ]
+                },
+                {
+                    "name": "destroyed$",
+                    "defaultValue": "new Subject()",
+                    "deprecated": false,
+                    "deprecationMessage": "",
+                    "type": "",
+                    "optional": false,
+                    "description": "",
+                    "line": 59,
+                    "modifierKind": [
+                        144
+                    ]
+                },
+                {
+                    "name": "disabledPoint$",
+                    "defaultValue": "new BehaviorSubject<InputData>(undefined)",
+                    "deprecated": false,
+                    "deprecationMessage": "",
+                    "type": "",
+                    "optional": false,
+                    "description": "",
+                    "line": 54,
+                    "modifierKind": [
+                        144
+                    ]
+                },
+                {
+                    "name": "disabledPoints$",
+                    "defaultValue": "new BehaviorSubject<InputData[]>([])",
+                    "deprecated": false,
+                    "deprecationMessage": "",
+                    "type": "",
+                    "optional": false,
+                    "description": "",
+                    "line": 55,
+                    "modifierKind": [
+                        144
+                    ]
+                },
+                {
+                    "name": "disabledPointsMap$",
+                    "defaultValue": "new BehaviorSubject<Map<string, InputData>>(\r\n    new Map()\r\n  )",
+                    "deprecated": false,
+                    "deprecationMessage": "",
+                    "type": "",
+                    "optional": false,
+                    "description": "",
+                    "line": 56,
+                    "modifierKind": [
+                        144
+                    ]
+                },
+                {
+                    "name": "instanceId",
+                    "defaultValue": "Math.round(Math.random() * (1000000 + 1))",
+                    "deprecated": false,
+                    "deprecationMessage": "",
+                    "type": "",
+                    "optional": false,
+                    "description": "",
+                    "line": 49,
+                    "modifierKind": [
+                        144
+                    ]
+                },
+                {
+                    "name": "lineSettings",
+                    "defaultValue": "{\r\n    type: 'line',\r\n    name: 'Regression Line',\r\n    data: [\r\n      [0, 1.11],\r\n      [5, 4.51],\r\n    ],\r\n    marker: {\r\n      enabled: false,\r\n    },\r\n    states: {\r\n      hover: {\r\n        lineWidth: 0,\r\n      },\r\n    },\r\n    //enableMouseTracking: false,\r\n  }",
+                    "deprecated": false,
+                    "deprecationMessage": "",
+                    "type": "Highcharts.SeriesLineOptions",
+                    "optional": false,
+                    "description": "",
+                    "line": 311
+                },
+                {
+                    "name": "settings",
+                    "defaultValue": "{\r\n    title: {\r\n      text: 'Scatter plot with regression line',\r\n    },\r\n    xAxis: {\r\n      min: -0.5,\r\n      max: 5.5,\r\n    },\r\n    yAxis: {\r\n      min: 0,\r\n    },\r\n    series: [\r\n      {\r\n        type: 'line',\r\n        name: 'Regression Line',\r\n        data: [\r\n          [0, 1.11],\r\n          [5, 4.51],\r\n        ],\r\n        marker: {\r\n          enabled: false,\r\n        },\r\n        states: {\r\n          hover: {\r\n            lineWidth: 0,\r\n          },\r\n        },\r\n        enableMouseTracking: false,\r\n      },\r\n      // {\r\n      //   type: 'scatter',\r\n      //   name: 'Observations',\r\n      //   data: [1, 1.5, 2.8, 3.5, 3.9, 4.2],\r\n      //   marker: {\r\n      //     //radius: 4,\r\n      //   },\r\n      // },\r\n    ],\r\n    rangeSelector: {\r\n      enabled: true,\r\n    },\r\n    chart: {\r\n      zooming: {\r\n        type: 'xy',\r\n      },\r\n    },\r\n  }",
+                    "deprecated": false,
+                    "deprecationMessage": "",
+                    "type": "Highcharts.Options",
+                    "optional": false,
+                    "description": "",
+                    "line": 329
+                }
+            ],
+            "methodsClass": [
+                {
+                    "name": "createChart",
+                    "args": [],
+                    "optional": false,
+                    "returnType": "void",
+                    "typeParameters": [],
+                    "line": 151,
+                    "deprecated": false,
+                    "deprecationMessage": ""
+                },
+                {
+                    "name": "disablePoint",
+                    "args": [
+                        {
+                            "name": "name",
+                            "type": "string",
+                            "deprecated": false,
+                            "deprecationMessage": ""
+                        }
+                    ],
+                    "optional": false,
+                    "returnType": "void",
+                    "typeParameters": [],
+                    "line": 298,
+                    "deprecated": false,
+                    "deprecationMessage": "",
+                    "jsdoctags": [
+                        {
+                            "name": "name",
+                            "type": "string",
+                            "deprecated": false,
+                            "deprecationMessage": "",
+                            "tagName": {
+                                "text": "param"
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "enablePoint",
+                    "args": [
+                        {
+                            "name": "name",
+                            "type": "string",
+                            "deprecated": false,
+                            "deprecationMessage": ""
+                        }
+                    ],
+                    "optional": false,
+                    "returnType": "void",
+                    "typeParameters": [],
+                    "line": 304,
+                    "deprecated": false,
+                    "deprecationMessage": "",
+                    "jsdoctags": [
+                        {
+                            "name": "name",
+                            "type": "string",
+                            "deprecated": false,
+                            "deprecationMessage": "",
+                            "tagName": {
+                                "text": "param"
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "getName",
+                    "args": [
+                        {
+                            "name": "d",
+                            "type": "InputData",
+                            "deprecated": false,
+                            "deprecationMessage": ""
+                        },
+                        {
+                            "name": "xLengthBef",
+                            "type": "number",
+                            "deprecated": false,
+                            "deprecationMessage": "",
+                            "optional": true
+                        },
+                        {
+                            "name": "xLengthAft",
+                            "type": "number",
+                            "deprecated": false,
+                            "deprecationMessage": "",
+                            "optional": true
+                        },
+                        {
+                            "name": "yLengthBef",
+                            "type": "number",
+                            "deprecated": false,
+                            "deprecationMessage": "",
+                            "optional": true
+                        },
+                        {
+                            "name": "yLengthAft",
+                            "type": "number",
+                            "deprecated": false,
+                            "deprecationMessage": "",
+                            "optional": true
+                        }
+                    ],
+                    "optional": false,
+                    "returnType": "string",
+                    "typeParameters": [],
+                    "line": 278,
+                    "deprecated": false,
+                    "deprecationMessage": "",
+                    "jsdoctags": [
+                        {
+                            "name": "d",
+                            "type": "InputData",
+                            "deprecated": false,
+                            "deprecationMessage": "",
+                            "tagName": {
+                                "text": "param"
+                            }
+                        },
+                        {
+                            "name": "xLengthBef",
+                            "type": "number",
+                            "deprecated": false,
+                            "deprecationMessage": "",
+                            "optional": true,
+                            "tagName": {
+                                "text": "param"
+                            }
+                        },
+                        {
+                            "name": "xLengthAft",
+                            "type": "number",
+                            "deprecated": false,
+                            "deprecationMessage": "",
+                            "optional": true,
+                            "tagName": {
+                                "text": "param"
+                            }
+                        },
+                        {
+                            "name": "yLengthBef",
+                            "type": "number",
+                            "deprecated": false,
+                            "deprecationMessage": "",
+                            "optional": true,
+                            "tagName": {
+                                "text": "param"
+                            }
+                        },
+                        {
+                            "name": "yLengthAft",
+                            "type": "number",
+                            "deprecated": false,
+                            "deprecationMessage": "",
+                            "optional": true,
+                            "tagName": {
+                                "text": "param"
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "ngAfterViewInit",
+                    "args": [],
+                    "optional": false,
+                    "returnType": "void",
+                    "typeParameters": [],
+                    "line": 140,
+                    "deprecated": false,
+                    "deprecationMessage": ""
+                },
+                {
+                    "name": "ngOnDestroy",
+                    "args": [],
+                    "optional": false,
+                    "returnType": "void",
+                    "typeParameters": [],
+                    "line": 144,
+                    "deprecated": false,
+                    "deprecationMessage": ""
+                },
+                {
+                    "name": "ngOnInit",
+                    "args": [],
+                    "optional": false,
+                    "returnType": "void",
+                    "typeParameters": [],
+                    "line": 138,
+                    "deprecated": false,
+                    "deprecationMessage": ""
+                }
+            ],
+            "deprecated": false,
+            "deprecationMessage": "",
+            "hostBindings": [],
+            "hostListeners": [],
+            "description": "",
+            "rawdescription": "\n",
+            "type": "component",
+            "sourceCode": "import {\r\n  map,\r\n  takeUntil,\r\n  tap,\r\n  switchMap,\r\n  distinctUntilChanged,\r\n  skip,\r\n} from 'rxjs/operators';\r\nimport { combineLatest, of, Subject } from 'rxjs';\r\nimport { BehaviorSubject } from 'rxjs';\r\nimport { EventEmitter, Input, Output } from '@angular/core';\r\nimport { AfterViewInit, Component, OnInit } from '@angular/core';\r\nimport * as Highcharts from 'highcharts/highcharts';\r\nimport * as lodash from 'lodash';\r\nimport * as moment from 'moment';\r\nimport { filterUndefined } from '../../lib/rxjs.utils';\r\nimport { MOMENT_SORTABLE } from '../../constants';\r\n\r\n@Component({\r\n  selector: 'app-regression-chart',\r\n  templateUrl: './regression-chart.component.html',\r\n  styleUrls: ['./regression-chart.component.scss'],\r\n})\r\nexport class RegressionChartComponent implements OnInit, AfterViewInit {\r\n  @Input() set data(data: InputData[]) {\r\n    this.data$.next(lodash.cloneDeep(data));\r\n  }\r\n\r\n  get data() {\r\n    return this.data$.value;\r\n  }\r\n\r\n  @Input() set disabledPoint(data: InputData) {\r\n    this.disabledPoint$.next(data);\r\n  }\r\n  get disabledPoint() {\r\n    return this.disabledPoint$.value;\r\n  }\r\n  @Input() set disabledPoints(data: InputData[]) {\r\n    this.disabledPoints$.next(data);\r\n  }\r\n  get disabledPoints() {\r\n    return this.disabledPoints$.value;\r\n  }\r\n\r\n  @Output() disabledPointChange = new EventEmitter();\r\n  @Output() disabledPointsChange = new EventEmitter();\r\n\r\n  readonly instanceId = Math.round(Math.random() * (1000000 + 1));\r\n  readonly chartId = 'regression-chart-' + this.instanceId;\r\n  chartInstance = undefined;\r\n\r\n  readonly data$ = new BehaviorSubject<InputData[]>([]);\r\n  readonly disabledPoint$ = new BehaviorSubject<InputData>(undefined);\r\n  readonly disabledPoints$ = new BehaviorSubject<InputData[]>([]);\r\n  readonly disabledPointsMap$ = new BehaviorSubject<Map<string, InputData>>(\r\n    new Map()\r\n  );\r\n  readonly destroyed$ = new Subject();\r\n\r\n  constructor() {\r\n    this.disabledPoint$\r\n      .pipe(\r\n        takeUntil(this.destroyed$),\r\n        filterUndefined(),\r\n        map(\r\n          (dp) => [dp, this.disabledPoints$.value] as [InputData, InputData[]]\r\n        )\r\n      )\r\n      .subscribe({\r\n        next: ([dp, dps]) => {\r\n          const existing = dps.find(\r\n            (p) =>\r\n              p.x === dp.x && p.y === dp.y && p.utcTimestamp === dp.utcTimestamp\r\n          );\r\n\r\n          if (existing) {\r\n            if (dp.disabled) {\r\n              existing.disabled = true;\r\n            } else {\r\n              dps = dps.filter((p) => p !== existing);\r\n            }\r\n          } else if (dp.disabled) {\r\n            dps.push(dp);\r\n          }\r\n\r\n          this.disabledPoints$.next(dps);\r\n          this.disabledPointChange.emit(dp);\r\n        },\r\n      });\r\n\r\n    this.disabledPoints$\r\n      .pipe(\r\n        skip(1), // Skip initial empty array\r\n        tap((dps) => {\r\n          const newMap = new Map();\r\n          dps.forEach((dp) => {\r\n            newMap.set(pointId(dp), dp);\r\n          });\r\n\r\n          this.disabledPointsMap$.next(newMap);\r\n        }),\r\n        switchMap((dps) =>\r\n          combineLatest([\r\n            of(dps),\r\n            this.disabledPointsMap$,\r\n            this.data$.pipe(distinctUntilChanged()),\r\n          ])\r\n        ),\r\n        takeUntil(this.destroyed$)\r\n      )\r\n      .subscribe({\r\n        next: ([dps, dpsMap, data]) => {\r\n          data.forEach((d) => {\r\n            const dp = dpsMap.get(pointId(d));\r\n\r\n            if (dp) {\r\n              d.disabled = !!dp.disabled;\r\n            } else {\r\n              if (d.disabled) {\r\n                delete d.disabled;\r\n              }\r\n            }\r\n          });\r\n\r\n          this.data$.next(data);\r\n          this.disabledPointsChange.emit(dps);\r\n        },\r\n      });\r\n\r\n    this.data$.pipe(takeUntil(this.destroyed$)).subscribe({\r\n      next: () => {\r\n        this.createChart();\r\n      },\r\n    });\r\n  }\r\n\r\n  ngOnInit() {}\r\n\r\n  ngAfterViewInit() {\r\n    this.createChart();\r\n  }\r\n\r\n  ngOnDestroy(): void {\r\n    //Called once, before the instance is destroyed.\r\n    //Add 'implements OnDestroy' to the class.\r\n    this.destroyed$.next();\r\n    this.destroyed$.complete();\r\n  }\r\n\r\n  createChart() {\r\n    const data = this.data;\r\n\r\n    const {\r\n      result_values,\r\n      max_x,\r\n      max_y,\r\n      min_x,\r\n      min_y,\r\n      max_x_before_length,\r\n      max_x_after_length,\r\n      max_y_before_length,\r\n      max_y_after_length,\r\n    } = findLineByLeastSquares(data);\r\n\r\n    this.settings.xAxis = {\r\n      ...this.settings.xAxis,\r\n      max: max_x,\r\n      min: min_x,\r\n    };\r\n    this.settings.yAxis = {\r\n      ...this.settings.yAxis,\r\n      max: max_y,\r\n      min: min_y,\r\n      startOnTick: false,\r\n    };\r\n\r\n    let lineData = [];\r\n\r\n    (result_values || []).forEach((v) => {\r\n      lineData.push([v.x, v.y]);\r\n    });\r\n\r\n    this.lineSettings.data = result_values;\r\n    this.settings.series = [this.lineSettings];\r\n    //this.settings.series[1].data = data;\r\n\r\n    this.data.forEach((d) => {\r\n      //let date = new Date(d.utcTimestamp);\r\n      //let name = `${date.getFullYear()}-${date.getMonth()}-${date.getDate()} ${date.getHours()}:${date.getMinutes()}`;\r\n      this.settings.series.push({\r\n        type: 'scatter',\r\n        id:\r\n          d.utcTimestamp instanceof Date\r\n            ? d.utcTimestamp.toISOString()\r\n            : d.utcTimestamp,\r\n        name: this.getName(\r\n          d,\r\n          max_x_before_length,\r\n          max_x_after_length,\r\n          max_y_before_length,\r\n          max_y_after_length\r\n        ),\r\n        data: [[d.x, d.y]],\r\n        marker: {\r\n          radius: 3,\r\n          enabled: true,\r\n        },\r\n        //selected: false, //!d.disabled,\r\n        visible: !d.disabled,\r\n        events: {\r\n          hide: ((eve) => {\r\n            const series = eve.target as any as Highcharts.Series;\r\n\r\n            this.disablePoint(series.name);\r\n\r\n            this.createChart();\r\n\r\n            // const { result_values } = findLineByLeastSquares(data);\r\n\r\n            // let lineData = [];\r\n\r\n            // result_values.forEach((v) => {\r\n            //   lineData.push([v.x, v.y]);\r\n            // });\r\n\r\n            //series.setData(lineData);\r\n          }) as Highcharts.SeriesHideCallbackFunction,\r\n          show: ((eve) => {\r\n            const series = eve.target as any as Highcharts.Series;\r\n\r\n            this.enablePoint(series.name);\r\n\r\n            this.createChart();\r\n\r\n            // const { result_values } = findLineByLeastSquares(data);\r\n\r\n            // let lineData = [];\r\n\r\n            // result_values.forEach((v) => {\r\n            //   lineData.push([v.x, v.y]);\r\n            // });\r\n\r\n            //series.setData(lineData);\r\n          }) as Highcharts.SeriesShowCallbackFunction,\r\n\r\n          click: ((eve) => {\r\n            if (!eve.point || !eve.point.series) {\r\n              return;\r\n            }\r\n            const series = eve.point.series;\r\n\r\n            this.disablePoint(series.name);\r\n            this.createChart();\r\n          }) as Highcharts.SeriesClickCallbackFunction,\r\n        },\r\n      });\r\n    });\r\n\r\n    try {\r\n      this.chartInstance = Highcharts.chart(\r\n        this.chartId,\r\n        this.settings,\r\n        (cb) => {\r\n          console.debug(\r\n            new Date().toISOString(),\r\n            ' - Reghression chart creation callback ',\r\n            this.chartId,\r\n            cb\r\n          );\r\n        }\r\n      );\r\n    } catch (e) {\r\n      console.error('Reghression chart -- failed to create component', e);\r\n    }\r\n  }\r\n\r\n  getName(\r\n    d: InputData,\r\n    xLengthBef?: number,\r\n    xLengthAft?: number,\r\n    yLengthBef?: number,\r\n    yLengthAft?: number\r\n  ) {\r\n    const [xBef, xAft] = (d.x + '.').split('.');\r\n    const [yBef, yAft] = (d.y + '.').split('.');\r\n    return `<pre>${moment(d.utcTimestamp).format(\r\n      MOMENT_SORTABLE\r\n    )}</pre> &emsp; ${getSpaces(xBef, xLengthBef, '&nbsp; ')} <span>${\r\n      d.x\r\n    }</span> &ensp; ${getSpaces(xAft, xLengthAft, '&nbsp; ')}${getSpaces(\r\n      yBef,\r\n      yLengthBef,\r\n      '&nbsp; '\r\n    )} <span>${d.y}</span>`;\r\n  }\r\n\r\n  disablePoint(name: string) {\r\n    const point = this.data.find((d) => this.getName(d) === name);\r\n    point.disabled = true;\r\n\r\n    this.disabledPoint$.next(point);\r\n  }\r\n  enablePoint(name: string) {\r\n    const point = this.data.find((d) => this.getName(d) === name);\r\n    delete point.disabled;\r\n\r\n    this.disabledPoint$.next(point);\r\n  }\r\n\r\n  lineSettings: Highcharts.SeriesLineOptions = {\r\n    type: 'line',\r\n    name: 'Regression Line',\r\n    data: [\r\n      [0, 1.11],\r\n      [5, 4.51],\r\n    ],\r\n    marker: {\r\n      enabled: false,\r\n    },\r\n    states: {\r\n      hover: {\r\n        lineWidth: 0,\r\n      },\r\n    },\r\n    //enableMouseTracking: false,\r\n  };\r\n\r\n  settings: Highcharts.Options = {\r\n    title: {\r\n      text: 'Scatter plot with regression line',\r\n    },\r\n    xAxis: {\r\n      min: -0.5,\r\n      max: 5.5,\r\n    },\r\n    yAxis: {\r\n      min: 0,\r\n    },\r\n    series: [\r\n      {\r\n        type: 'line',\r\n        name: 'Regression Line',\r\n        data: [\r\n          [0, 1.11],\r\n          [5, 4.51],\r\n        ],\r\n        marker: {\r\n          enabled: false,\r\n        },\r\n        states: {\r\n          hover: {\r\n            lineWidth: 0,\r\n          },\r\n        },\r\n        enableMouseTracking: false,\r\n      },\r\n      // {\r\n      //   type: 'scatter',\r\n      //   name: 'Observations',\r\n      //   data: [1, 1.5, 2.8, 3.5, 3.9, 4.2],\r\n      //   marker: {\r\n      //     //radius: 4,\r\n      //   },\r\n      // },\r\n    ],\r\n    rangeSelector: {\r\n      enabled: true,\r\n    },\r\n    chart: {\r\n      zooming: {\r\n        type: 'xy',\r\n      },\r\n    },\r\n  };\r\n}\r\n\r\nfunction addSpaces(n, length: number, space: string = ' ') {\r\n  return n + getSpaces(n, length, space);\r\n}\r\n\r\nfunction getSpaces(n, length: number, space: string = ' ') {\r\n  const oldL = (n + '').length;\r\n  const diff = length - oldL;\r\n\r\n  if (diff > 0) {\r\n    return Array.from(Array(diff))\r\n      .map(() => space)\r\n      .join('');\r\n  }\r\n\r\n  return '';\r\n}\r\n\r\nfunction findLineByLeastSquares(\r\n  values: { x: number; y: number; disabled?: boolean }[]\r\n) {\r\n  var sum_x = 0;\r\n  var sum_y = 0;\r\n  var sum_xy = 0;\r\n  var sum_xx = 0;\r\n  var count = 0;\r\n\r\n  let max_x = undefined;\r\n  let max_y = undefined;\r\n  let min_x = undefined;\r\n  let min_y = undefined;\r\n\r\n  let max_x_before_length = undefined;\r\n  let max_x_after_length = undefined;\r\n  let max_y_before_length = undefined;\r\n  let max_y_after_length = undefined;\r\n\r\n  /*\r\n   * We'll use those variables for faster read/write access.\r\n   */\r\n  var x = 0;\r\n  var y = 0;\r\n  var values_length = values.length;\r\n\r\n  /*\r\n   * Nothing to do.\r\n   */\r\n  if (values_length === 0) {\r\n    return {\r\n      result_values,\r\n      m,\r\n      b,\r\n      sum_x,\r\n      sum_y,\r\n      sum_xx,\r\n      sum_xy,\r\n      count,\r\n\r\n      max_x,\r\n      max_y,\r\n      min_x,\r\n      min_y,\r\n\r\n      max_x_before_length,\r\n      max_x_after_length,\r\n      max_y_before_length,\r\n      max_y_after_length,\r\n    };\r\n  }\r\n\r\n  /*\r\n   * Calculate the sum for each of the parts necessary.\r\n   */\r\n  for (var v = 0; v < values_length; v++) {\r\n    if (values[v].disabled) {\r\n      continue;\r\n    }\r\n    x = values[v].x;\r\n    y = values[v].y;\r\n    sum_x += x;\r\n    sum_y += y;\r\n    sum_xx += x * x;\r\n    sum_xy += x * y;\r\n    count++;\r\n\r\n    if (max_x === undefined || x > max_x) {\r\n      max_x = x;\r\n    }\r\n    if (max_y === undefined || y > max_y) {\r\n      max_y = y;\r\n    }\r\n    if (min_x === undefined || x < min_x) {\r\n      min_x = x;\r\n    }\r\n    if (min_y === undefined || y < min_y) {\r\n      min_y = y;\r\n    }\r\n\r\n    const [xBefore, xAfter] = (x + '.').split('.');\r\n    if (\r\n      max_x_before_length === undefined ||\r\n      xBefore.length > max_x_before_length\r\n    ) {\r\n      max_x_before_length = xBefore.length;\r\n    }\r\n    if (\r\n      max_x_after_length === undefined ||\r\n      xAfter.length > max_x_after_length\r\n    ) {\r\n      max_x_after_length = xAfter.length;\r\n    }\r\n    const [yBefore, yAfter] = (y + '.').split('.');\r\n    if (\r\n      max_y_before_length === undefined ||\r\n      yBefore.length > max_y_before_length\r\n    ) {\r\n      max_y_before_length = yBefore.length;\r\n    }\r\n    if (\r\n      max_y_after_length === undefined ||\r\n      yAfter.length > max_y_after_length\r\n    ) {\r\n      max_y_after_length = yAfter.length;\r\n    }\r\n  }\r\n\r\n  /*\r\n   * Calculate m and b for the formular:\r\n   * y = x * m + b\r\n   */\r\n  var m = (count * sum_xy - sum_x * sum_y) / (count * sum_xx - sum_x * sum_x);\r\n  var b = sum_y / count - (m * sum_x) / count;\r\n\r\n  /*\r\n   * We will make the x and y result line now\r\n   */\r\n  var result_values: { x: number; y: number; disabled?: boolean }[] = [];\r\n\r\n  for (var v = 0; v < values_length; v++) {\r\n    x = values[v].x;\r\n    y = x * m + b;\r\n    let result = { x, y };\r\n    if (values[v].disabled) {\r\n      (result as any).disabled = true;\r\n    }\r\n\r\n    result_values.push({ x, y });\r\n  }\r\n\r\n  return {\r\n    result_values,\r\n    m,\r\n    b,\r\n    sum_x,\r\n    sum_y,\r\n    sum_xx,\r\n    sum_xy,\r\n    count,\r\n\r\n    max_x,\r\n    max_y,\r\n    min_x,\r\n    min_y,\r\n\r\n    max_x_before_length,\r\n    max_x_after_length,\r\n    max_y_before_length,\r\n    max_y_after_length,\r\n  };\r\n}\r\n\r\n//take an array of triplets (x, y, r) where r is the weight of the (x, y) data point\r\n// and return [a, b] such that Y = a*X + b approximate the data.\r\n// return (a, b) that minimize\r\n// sum_i r_i * (a*x_i+b - y_i)^2\r\nfunction linear_regression(xyr: [number, number, number][]) {\r\n  var i,\r\n    x,\r\n    y,\r\n    r,\r\n    sumx = 0,\r\n    sumy = 0,\r\n    sumx2 = 0,\r\n    sumy2 = 0,\r\n    sumxy = 0,\r\n    sumr = 0,\r\n    a,\r\n    b;\r\n\r\n  for (i = 0; i < xyr.length; i++) {\r\n    // this is our data pair\r\n    x = xyr[i][0];\r\n    y = xyr[i][1];\r\n\r\n    // this is the weight for that pair\r\n    // set to 1 (and simplify code accordingly, ie, sumr becomes xy.length) if weighting is not needed\r\n    r = xyr[i][2] || 1;\r\n\r\n    // consider checking for NaN in the x, y and r variables here\r\n    // (add a continue statement in that case)\r\n\r\n    sumr += r;\r\n    sumx += r * x;\r\n    sumx2 += r * (x * x);\r\n    sumy += r * y;\r\n    sumy2 += r * (y * y);\r\n    sumxy += r * (x * y);\r\n  }\r\n\r\n  // note: the denominator is the variance of the random variable X\r\n  // the only case when it is 0 is the degenerate case X==constant\r\n  b = (sumy * sumx2 - sumx * sumxy) / (sumr * sumx2 - sumx * sumx);\r\n  a = (sumr * sumxy - sumx * sumy) / (sumr * sumx2 - sumx * sumx);\r\n\r\n  return [a, b];\r\n}\r\n\r\nfunction split(arr: any[], a: string | number, b: string | number) {\r\n  const x = [];\r\n  const y = [];\r\n\r\n  arr.forEach((item) => {\r\n    x.push(item[a]);\r\n    y.push(item[b]);\r\n  });\r\n\r\n  return [x, y];\r\n}\r\n\r\nfunction join(x: any[], y: any[]) {\r\n  const reult = [];\r\n\r\n  x.forEach((val, i) => {\r\n    reult.push([val, y[i]]);\r\n  });\r\n\r\n  return reult;\r\n}\r\n\r\nexport function pointId(p: InputData) {\r\n  return `${p.x}-${p.y}-${p.utcTimestamp}`;\r\n}\r\n\r\nexport interface InputData {\r\n  x: number;\r\n  y: number;\r\n  utcTimestamp: string | Date;\r\n  disabled?: boolean;\r\n}\r\n\r\nexport const dataExample = [\r\n  {\r\n    x: 291643.8125,\r\n    y: -516.95822983851352,\r\n    utcTimestamp: '2022-01-01T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 306358.09375,\r\n    y: -28.599697280958903,\r\n    utcTimestamp: '2022-01-02T00:00:00.0000000Z',\r\n    disabled: true,\r\n  },\r\n  {\r\n    x: 294482.1875,\r\n    y: 17.449047584863134,\r\n    utcTimestamp: '2022-01-03T00:00:00.0000000Z',\r\n    disabled: true,\r\n  },\r\n  {\r\n    x: 295200.8125,\r\n    y: -16.290651928651304,\r\n    utcTimestamp: '2022-01-04T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 304980.15625,\r\n    y: -36.33268860010258,\r\n    utcTimestamp: '2022-01-05T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 290823.9375,\r\n    y: 72.94667753439074,\r\n    utcTimestamp: '2022-01-06T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 302826.71875,\r\n    y: -31.56637421212807,\r\n    utcTimestamp: '2022-01-07T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 277571.125,\r\n    y: 59.40460890416173,\r\n    utcTimestamp: '2022-01-08T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 282386.03125,\r\n    y: 55.874029432691806,\r\n    utcTimestamp: '2022-01-09T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 328780.15625,\r\n    y: -34.4693497990958,\r\n    utcTimestamp: '2022-01-10T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 294187.09375,\r\n    y: -1.3032278265938184,\r\n    utcTimestamp: '2022-01-11T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 312394.34375,\r\n    y: -6.911932716158221,\r\n    utcTimestamp: '2022-01-12T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 312601.3125,\r\n    y: -9.003792625475462,\r\n    utcTimestamp: '2022-01-13T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 317157.125,\r\n    y: -40.188484005100364,\r\n    utcTimestamp: '2022-01-14T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 312196.5,\r\n    y: -48.21375061682075,\r\n    utcTimestamp: '2022-01-15T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 320370.3125,\r\n    y: -47.948673718681555,\r\n    utcTimestamp: '2022-01-16T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 281944.6875,\r\n    y: 54.996767992704434,\r\n    utcTimestamp: '2022-01-17T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 318679.4375,\r\n    y: -47.45671790219554,\r\n    utcTimestamp: '2022-01-18T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 303753.3125,\r\n    y: -13.918129540828733,\r\n    utcTimestamp: '2022-01-19T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 298511.1875,\r\n    y: 24.277307159815837,\r\n    utcTimestamp: '2022-01-20T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 303621.40625,\r\n    y: -45.95973060159068,\r\n    utcTimestamp: '2022-01-21T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 288204.78125,\r\n    y: 11.478569981989047,\r\n    utcTimestamp: '2022-01-22T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 331921.0625,\r\n    y: -106.94544040681629,\r\n    utcTimestamp: '2022-01-23T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 307386.34375,\r\n    y: -1.5602052418826324,\r\n    utcTimestamp: '2022-01-24T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 297215.5,\r\n    y: -32.4862725145919,\r\n    utcTimestamp: '2022-01-25T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 300953.8125,\r\n    y: -41.90986370439141,\r\n    utcTimestamp: '2022-01-26T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 306011.34375,\r\n    y: -18.805902012859214,\r\n    utcTimestamp: '2022-01-27T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 300762.90625,\r\n    y: -8.057343453595667,\r\n    utcTimestamp: '2022-01-28T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 314642.6875,\r\n    y: 22.276470017752782,\r\n    utcTimestamp: '2022-01-29T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 314995.71875,\r\n    y: -0.9243983099799454,\r\n    utcTimestamp: '2022-01-30T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 304538.53125,\r\n    y: -31.269631863015626,\r\n    utcTimestamp: '2022-01-31T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 308073.40625,\r\n    y: -29.802443820817736,\r\n    utcTimestamp: '2022-02-01T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 310857.375,\r\n    y: 2.0860303818469492,\r\n    utcTimestamp: '2022-02-02T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 292309.28125,\r\n    y: -8.847192482364672,\r\n    utcTimestamp: '2022-02-03T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 293479.625,\r\n    y: 44.94728582327022,\r\n    utcTimestamp: '2022-02-04T00:00:00.0000000Z',\r\n  },\r\n];\r\n",
+            "assetsDirs": [],
+            "styleUrlsData": [
+                {
+                    "data": ".regression-chart {\r\n  width: 100%;\r\n  height: 100%;\r\n}\r\n",
+                    "styleUrl": "./regression-chart.component.scss"
+                }
+            ],
+            "stylesData": "",
+            "constructorObj": {
+                "name": "constructor",
+                "description": "",
+                "deprecated": false,
+                "deprecationMessage": "",
+                "args": [],
+                "line": 59
+            },
+            "implements": [
+                "OnInit",
+                "AfterViewInit"
+            ],
+            "accessors": {
+                "data": {
+                    "name": "data",
+                    "setSignature": {
+                        "name": "data",
+                        "type": "void",
+                        "deprecated": false,
+                        "deprecationMessage": "",
+                        "args": [
+                            {
+                                "name": "data",
+                                "type": "InputData[]",
+                                "deprecated": false,
+                                "deprecationMessage": ""
+                            }
+                        ],
+                        "returnType": "void",
+                        "line": 25,
+                        "jsdoctags": [
+                            {
+                                "name": "data",
+                                "type": "InputData[]",
+                                "deprecated": false,
+                                "deprecationMessage": "",
+                                "tagName": {
+                                    "text": "param"
+                                }
+                            }
+                        ]
+                    },
+                    "getSignature": {
+                        "name": "data",
+                        "type": "",
+                        "returnType": "",
+                        "line": 29
+                    }
+                },
+                "disabledPoint": {
+                    "name": "disabledPoint",
+                    "setSignature": {
+                        "name": "disabledPoint",
+                        "type": "void",
+                        "deprecated": false,
+                        "deprecationMessage": "",
+                        "args": [
+                            {
+                                "name": "data",
+                                "type": "InputData",
+                                "deprecated": false,
+                                "deprecationMessage": ""
+                            }
+                        ],
+                        "returnType": "void",
+                        "line": 33,
+                        "jsdoctags": [
+                            {
+                                "name": "data",
+                                "type": "InputData",
+                                "deprecated": false,
+                                "deprecationMessage": "",
+                                "tagName": {
+                                    "text": "param"
+                                }
+                            }
+                        ]
+                    },
+                    "getSignature": {
+                        "name": "disabledPoint",
+                        "type": "",
+                        "returnType": "",
+                        "line": 36
+                    }
+                },
+                "disabledPoints": {
+                    "name": "disabledPoints",
+                    "setSignature": {
+                        "name": "disabledPoints",
+                        "type": "void",
+                        "deprecated": false,
+                        "deprecationMessage": "",
+                        "args": [
+                            {
+                                "name": "data",
+                                "type": "InputData[]",
+                                "deprecated": false,
+                                "deprecationMessage": ""
+                            }
+                        ],
+                        "returnType": "void",
+                        "line": 39,
+                        "jsdoctags": [
+                            {
+                                "name": "data",
+                                "type": "InputData[]",
+                                "deprecated": false,
+                                "deprecationMessage": "",
+                                "tagName": {
+                                    "text": "param"
+                                }
+                            }
+                        ]
+                    },
+                    "getSignature": {
+                        "name": "disabledPoints",
+                        "type": "",
+                        "returnType": "",
+                        "line": 42
+                    }
+                }
+            },
+            "templateData": "<div [id]=\"chartId\" class=\"regression-chart\"></div>\r\n"
         }
     ],
     "modules": [
@@ -424,10 +993,64 @@
                     "elements": []
                 }
             ]
+        },
+        {
+            "name": "SharedModule",
+            "id": "module-SharedModule-176bfe7dbae270c8d70466c9254f75febda2b022b556009d5783ebd4c0ce1977bc13f5719b6f4f5cc5724321c27fed00e75ce179ecc54807d735ef90e7e6b541",
+            "description": "",
+            "deprecationMessage": "",
+            "deprecated": false,
+            "file": "src/shared/shared.module.ts",
+            "methods": [],
+            "sourceCode": "import { CommonModule } from '@angular/common';\r\nimport { NgModule } from '@angular/core';\r\nimport { RegressionChartComponent } from './components/regression-chart/regression-chart.component';\r\n\r\n@NgModule({\r\n  declarations: [RegressionChartComponent],\r\n  imports: [CommonModule],\r\n  exports: [RegressionChartComponent],\r\n  entryComponents: [],\r\n})\r\nexport class SharedModule {}\r\n",
+            "children": [
+                {
+                    "type": "providers",
+                    "elements": []
+                },
+                {
+                    "type": "declarations",
+                    "elements": [
+                        {
+                            "name": "RegressionChartComponent"
+                        }
+                    ]
+                },
+                {
+                    "type": "imports",
+                    "elements": []
+                },
+                {
+                    "type": "exports",
+                    "elements": [
+                        {
+                            "name": "RegressionChartComponent"
+                        }
+                    ]
+                },
+                {
+                    "type": "bootstrap",
+                    "elements": []
+                },
+                {
+                    "type": "classes",
+                    "elements": []
+                }
+            ]
         }
     ],
     "miscellaneous": {
         "variables": [
+            {
+                "name": "dataExample",
+                "ctype": "miscellaneous",
+                "subtype": "variable",
+                "file": "src/shared/components/regression-chart/regression-chart.component.ts",
+                "deprecated": false,
+                "deprecationMessage": "",
+                "type": "[]",
+                "defaultValue": "[\r\n  {\r\n    x: 291643.8125,\r\n    y: -516.95822983851352,\r\n    utcTimestamp: '2022-01-01T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 306358.09375,\r\n    y: -28.599697280958903,\r\n    utcTimestamp: '2022-01-02T00:00:00.0000000Z',\r\n    disabled: true,\r\n  },\r\n  {\r\n    x: 294482.1875,\r\n    y: 17.449047584863134,\r\n    utcTimestamp: '2022-01-03T00:00:00.0000000Z',\r\n    disabled: true,\r\n  },\r\n  {\r\n    x: 295200.8125,\r\n    y: -16.290651928651304,\r\n    utcTimestamp: '2022-01-04T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 304980.15625,\r\n    y: -36.33268860010258,\r\n    utcTimestamp: '2022-01-05T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 290823.9375,\r\n    y: 72.94667753439074,\r\n    utcTimestamp: '2022-01-06T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 302826.71875,\r\n    y: -31.56637421212807,\r\n    utcTimestamp: '2022-01-07T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 277571.125,\r\n    y: 59.40460890416173,\r\n    utcTimestamp: '2022-01-08T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 282386.03125,\r\n    y: 55.874029432691806,\r\n    utcTimestamp: '2022-01-09T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 328780.15625,\r\n    y: -34.4693497990958,\r\n    utcTimestamp: '2022-01-10T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 294187.09375,\r\n    y: -1.3032278265938184,\r\n    utcTimestamp: '2022-01-11T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 312394.34375,\r\n    y: -6.911932716158221,\r\n    utcTimestamp: '2022-01-12T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 312601.3125,\r\n    y: -9.003792625475462,\r\n    utcTimestamp: '2022-01-13T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 317157.125,\r\n    y: -40.188484005100364,\r\n    utcTimestamp: '2022-01-14T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 312196.5,\r\n    y: -48.21375061682075,\r\n    utcTimestamp: '2022-01-15T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 320370.3125,\r\n    y: -47.948673718681555,\r\n    utcTimestamp: '2022-01-16T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 281944.6875,\r\n    y: 54.996767992704434,\r\n    utcTimestamp: '2022-01-17T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 318679.4375,\r\n    y: -47.45671790219554,\r\n    utcTimestamp: '2022-01-18T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 303753.3125,\r\n    y: -13.918129540828733,\r\n    utcTimestamp: '2022-01-19T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 298511.1875,\r\n    y: 24.277307159815837,\r\n    utcTimestamp: '2022-01-20T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 303621.40625,\r\n    y: -45.95973060159068,\r\n    utcTimestamp: '2022-01-21T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 288204.78125,\r\n    y: 11.478569981989047,\r\n    utcTimestamp: '2022-01-22T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 331921.0625,\r\n    y: -106.94544040681629,\r\n    utcTimestamp: '2022-01-23T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 307386.34375,\r\n    y: -1.5602052418826324,\r\n    utcTimestamp: '2022-01-24T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 297215.5,\r\n    y: -32.4862725145919,\r\n    utcTimestamp: '2022-01-25T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 300953.8125,\r\n    y: -41.90986370439141,\r\n    utcTimestamp: '2022-01-26T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 306011.34375,\r\n    y: -18.805902012859214,\r\n    utcTimestamp: '2022-01-27T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 300762.90625,\r\n    y: -8.057343453595667,\r\n    utcTimestamp: '2022-01-28T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 314642.6875,\r\n    y: 22.276470017752782,\r\n    utcTimestamp: '2022-01-29T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 314995.71875,\r\n    y: -0.9243983099799454,\r\n    utcTimestamp: '2022-01-30T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 304538.53125,\r\n    y: -31.269631863015626,\r\n    utcTimestamp: '2022-01-31T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 308073.40625,\r\n    y: -29.802443820817736,\r\n    utcTimestamp: '2022-02-01T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 310857.375,\r\n    y: 2.0860303818469492,\r\n    utcTimestamp: '2022-02-02T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 292309.28125,\r\n    y: -8.847192482364672,\r\n    utcTimestamp: '2022-02-03T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 293479.625,\r\n    y: 44.94728582327022,\r\n    utcTimestamp: '2022-02-04T00:00:00.0000000Z',\r\n  },\r\n]"
+            },
             {
                 "name": "environment",
                 "ctype": "miscellaneous",
@@ -499,6 +1122,16 @@
                 "defaultValue": "Template.bind({})"
             },
             {
+                "name": "MOMENT_SORTABLE",
+                "ctype": "miscellaneous",
+                "subtype": "variable",
+                "file": "src/shared/constants.ts",
+                "deprecated": false,
+                "deprecationMessage": "",
+                "type": "string",
+                "defaultValue": "'YYYY-MM-DD HH:mm:ss'"
+            },
+            {
                 "name": "Primary",
                 "ctype": "miscellaneous",
                 "subtype": "variable",
@@ -559,10 +1192,354 @@
                 "defaultValue": "(args: Page) => ({\n  props: args,\n})"
             }
         ],
-        "functions": [],
+        "functions": [
+            {
+                "name": "addSpaces",
+                "file": "src/shared/components/regression-chart/regression-chart.component.ts",
+                "ctype": "miscellaneous",
+                "subtype": "function",
+                "deprecated": false,
+                "deprecationMessage": "",
+                "description": "",
+                "args": [
+                    {
+                        "name": "n",
+                        "type": "",
+                        "deprecated": false,
+                        "deprecationMessage": ""
+                    },
+                    {
+                        "name": "length",
+                        "type": "number",
+                        "deprecated": false,
+                        "deprecationMessage": ""
+                    },
+                    {
+                        "name": "space",
+                        "type": "string",
+                        "deprecated": false,
+                        "deprecationMessage": "",
+                        "defaultValue": "' '"
+                    }
+                ],
+                "jsdoctags": [
+                    {
+                        "name": "n",
+                        "type": "",
+                        "deprecated": false,
+                        "deprecationMessage": "",
+                        "tagName": {
+                            "text": "param"
+                        }
+                    },
+                    {
+                        "name": "length",
+                        "type": "number",
+                        "deprecated": false,
+                        "deprecationMessage": "",
+                        "tagName": {
+                            "text": "param"
+                        }
+                    },
+                    {
+                        "name": "space",
+                        "type": "string",
+                        "deprecated": false,
+                        "deprecationMessage": "",
+                        "defaultValue": "' '",
+                        "tagName": {
+                            "text": "param"
+                        }
+                    }
+                ]
+            },
+            {
+                "name": "filterUndefined",
+                "file": "src/shared/lib/rxjs.utils.ts",
+                "ctype": "miscellaneous",
+                "subtype": "function",
+                "deprecated": false,
+                "deprecationMessage": "",
+                "description": "<p>Same as filter((x)=&gt; x !== undefined) except it will work better with TypeScript</p>\n",
+                "args": [],
+                "returnType": "Observable<NonNullable<T>>"
+            },
+            {
+                "name": "findLineByLeastSquares",
+                "file": "src/shared/components/regression-chart/regression-chart.component.ts",
+                "ctype": "miscellaneous",
+                "subtype": "function",
+                "deprecated": false,
+                "deprecationMessage": "",
+                "description": "",
+                "args": [
+                    {
+                        "name": "values",
+                        "deprecated": false,
+                        "deprecationMessage": ""
+                    }
+                ],
+                "jsdoctags": [
+                    {
+                        "name": "values",
+                        "deprecated": false,
+                        "deprecationMessage": "",
+                        "tagName": {
+                            "text": "param"
+                        }
+                    }
+                ]
+            },
+            {
+                "name": "formValues",
+                "file": "src/shared/lib/rxjs.utils.ts",
+                "ctype": "miscellaneous",
+                "subtype": "function",
+                "deprecated": false,
+                "deprecationMessage": "",
+                "description": "",
+                "args": [
+                    {
+                        "name": "control",
+                        "type": "FormControl",
+                        "deprecated": false,
+                        "deprecationMessage": ""
+                    }
+                ],
+                "returnType": "Observable<any>",
+                "jsdoctags": [
+                    {
+                        "name": "control",
+                        "type": "FormControl",
+                        "deprecated": false,
+                        "deprecationMessage": "",
+                        "tagName": {
+                            "text": "param"
+                        }
+                    }
+                ]
+            },
+            {
+                "name": "getSpaces",
+                "file": "src/shared/components/regression-chart/regression-chart.component.ts",
+                "ctype": "miscellaneous",
+                "subtype": "function",
+                "deprecated": false,
+                "deprecationMessage": "",
+                "description": "",
+                "args": [
+                    {
+                        "name": "n",
+                        "type": "",
+                        "deprecated": false,
+                        "deprecationMessage": ""
+                    },
+                    {
+                        "name": "length",
+                        "type": "number",
+                        "deprecated": false,
+                        "deprecationMessage": ""
+                    },
+                    {
+                        "name": "space",
+                        "type": "string",
+                        "deprecated": false,
+                        "deprecationMessage": "",
+                        "defaultValue": "' '"
+                    }
+                ],
+                "jsdoctags": [
+                    {
+                        "name": "n",
+                        "type": "",
+                        "deprecated": false,
+                        "deprecationMessage": "",
+                        "tagName": {
+                            "text": "param"
+                        }
+                    },
+                    {
+                        "name": "length",
+                        "type": "number",
+                        "deprecated": false,
+                        "deprecationMessage": "",
+                        "tagName": {
+                            "text": "param"
+                        }
+                    },
+                    {
+                        "name": "space",
+                        "type": "string",
+                        "deprecated": false,
+                        "deprecationMessage": "",
+                        "defaultValue": "' '",
+                        "tagName": {
+                            "text": "param"
+                        }
+                    }
+                ]
+            },
+            {
+                "name": "join",
+                "file": "src/shared/components/regression-chart/regression-chart.component.ts",
+                "ctype": "miscellaneous",
+                "subtype": "function",
+                "deprecated": false,
+                "deprecationMessage": "",
+                "description": "",
+                "args": [
+                    {
+                        "name": "x",
+                        "deprecated": false,
+                        "deprecationMessage": ""
+                    },
+                    {
+                        "name": "y",
+                        "deprecated": false,
+                        "deprecationMessage": ""
+                    }
+                ],
+                "jsdoctags": [
+                    {
+                        "name": "x",
+                        "deprecated": false,
+                        "deprecationMessage": "",
+                        "tagName": {
+                            "text": "param"
+                        }
+                    },
+                    {
+                        "name": "y",
+                        "deprecated": false,
+                        "deprecationMessage": "",
+                        "tagName": {
+                            "text": "param"
+                        }
+                    }
+                ]
+            },
+            {
+                "name": "linear_regression",
+                "file": "src/shared/components/regression-chart/regression-chart.component.ts",
+                "ctype": "miscellaneous",
+                "subtype": "function",
+                "deprecated": false,
+                "deprecationMessage": "",
+                "description": "",
+                "args": [
+                    {
+                        "name": "xyr",
+                        "deprecated": false,
+                        "deprecationMessage": ""
+                    }
+                ],
+                "jsdoctags": [
+                    {
+                        "name": "xyr",
+                        "deprecated": false,
+                        "deprecationMessage": "",
+                        "tagName": {
+                            "text": "param"
+                        }
+                    }
+                ]
+            },
+            {
+                "name": "pointId",
+                "file": "src/shared/components/regression-chart/regression-chart.component.ts",
+                "ctype": "miscellaneous",
+                "subtype": "function",
+                "deprecated": false,
+                "deprecationMessage": "",
+                "description": "",
+                "args": [
+                    {
+                        "name": "p",
+                        "type": "InputData",
+                        "deprecated": false,
+                        "deprecationMessage": ""
+                    }
+                ],
+                "jsdoctags": [
+                    {
+                        "name": "p",
+                        "type": "InputData",
+                        "deprecated": false,
+                        "deprecationMessage": "",
+                        "tagName": {
+                            "text": "param"
+                        }
+                    }
+                ]
+            },
+            {
+                "name": "split",
+                "file": "src/shared/components/regression-chart/regression-chart.component.ts",
+                "ctype": "miscellaneous",
+                "subtype": "function",
+                "deprecated": false,
+                "deprecationMessage": "",
+                "description": "",
+                "args": [
+                    {
+                        "name": "arr",
+                        "deprecated": false,
+                        "deprecationMessage": ""
+                    },
+                    {
+                        "name": "a",
+                        "deprecated": false,
+                        "deprecationMessage": ""
+                    },
+                    {
+                        "name": "b",
+                        "deprecated": false,
+                        "deprecationMessage": ""
+                    }
+                ],
+                "jsdoctags": [
+                    {
+                        "name": "arr",
+                        "deprecated": false,
+                        "deprecationMessage": "",
+                        "tagName": {
+                            "text": "param"
+                        }
+                    },
+                    {
+                        "name": "a",
+                        "deprecated": false,
+                        "deprecationMessage": "",
+                        "tagName": {
+                            "text": "param"
+                        }
+                    },
+                    {
+                        "name": "b",
+                        "deprecated": false,
+                        "deprecationMessage": "",
+                        "tagName": {
+                            "text": "param"
+                        }
+                    }
+                ]
+            }
+        ],
         "typealiases": [],
         "enumerations": [],
         "groupedVariables": {
+            "src/shared/components/regression-chart/regression-chart.component.ts": [
+                {
+                    "name": "dataExample",
+                    "ctype": "miscellaneous",
+                    "subtype": "variable",
+                    "file": "src/shared/components/regression-chart/regression-chart.component.ts",
+                    "deprecated": false,
+                    "deprecationMessage": "",
+                    "type": "[]",
+                    "defaultValue": "[\r\n  {\r\n    x: 291643.8125,\r\n    y: -516.95822983851352,\r\n    utcTimestamp: '2022-01-01T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 306358.09375,\r\n    y: -28.599697280958903,\r\n    utcTimestamp: '2022-01-02T00:00:00.0000000Z',\r\n    disabled: true,\r\n  },\r\n  {\r\n    x: 294482.1875,\r\n    y: 17.449047584863134,\r\n    utcTimestamp: '2022-01-03T00:00:00.0000000Z',\r\n    disabled: true,\r\n  },\r\n  {\r\n    x: 295200.8125,\r\n    y: -16.290651928651304,\r\n    utcTimestamp: '2022-01-04T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 304980.15625,\r\n    y: -36.33268860010258,\r\n    utcTimestamp: '2022-01-05T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 290823.9375,\r\n    y: 72.94667753439074,\r\n    utcTimestamp: '2022-01-06T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 302826.71875,\r\n    y: -31.56637421212807,\r\n    utcTimestamp: '2022-01-07T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 277571.125,\r\n    y: 59.40460890416173,\r\n    utcTimestamp: '2022-01-08T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 282386.03125,\r\n    y: 55.874029432691806,\r\n    utcTimestamp: '2022-01-09T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 328780.15625,\r\n    y: -34.4693497990958,\r\n    utcTimestamp: '2022-01-10T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 294187.09375,\r\n    y: -1.3032278265938184,\r\n    utcTimestamp: '2022-01-11T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 312394.34375,\r\n    y: -6.911932716158221,\r\n    utcTimestamp: '2022-01-12T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 312601.3125,\r\n    y: -9.003792625475462,\r\n    utcTimestamp: '2022-01-13T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 317157.125,\r\n    y: -40.188484005100364,\r\n    utcTimestamp: '2022-01-14T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 312196.5,\r\n    y: -48.21375061682075,\r\n    utcTimestamp: '2022-01-15T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 320370.3125,\r\n    y: -47.948673718681555,\r\n    utcTimestamp: '2022-01-16T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 281944.6875,\r\n    y: 54.996767992704434,\r\n    utcTimestamp: '2022-01-17T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 318679.4375,\r\n    y: -47.45671790219554,\r\n    utcTimestamp: '2022-01-18T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 303753.3125,\r\n    y: -13.918129540828733,\r\n    utcTimestamp: '2022-01-19T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 298511.1875,\r\n    y: 24.277307159815837,\r\n    utcTimestamp: '2022-01-20T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 303621.40625,\r\n    y: -45.95973060159068,\r\n    utcTimestamp: '2022-01-21T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 288204.78125,\r\n    y: 11.478569981989047,\r\n    utcTimestamp: '2022-01-22T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 331921.0625,\r\n    y: -106.94544040681629,\r\n    utcTimestamp: '2022-01-23T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 307386.34375,\r\n    y: -1.5602052418826324,\r\n    utcTimestamp: '2022-01-24T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 297215.5,\r\n    y: -32.4862725145919,\r\n    utcTimestamp: '2022-01-25T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 300953.8125,\r\n    y: -41.90986370439141,\r\n    utcTimestamp: '2022-01-26T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 306011.34375,\r\n    y: -18.805902012859214,\r\n    utcTimestamp: '2022-01-27T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 300762.90625,\r\n    y: -8.057343453595667,\r\n    utcTimestamp: '2022-01-28T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 314642.6875,\r\n    y: 22.276470017752782,\r\n    utcTimestamp: '2022-01-29T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 314995.71875,\r\n    y: -0.9243983099799454,\r\n    utcTimestamp: '2022-01-30T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 304538.53125,\r\n    y: -31.269631863015626,\r\n    utcTimestamp: '2022-01-31T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 308073.40625,\r\n    y: -29.802443820817736,\r\n    utcTimestamp: '2022-02-01T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 310857.375,\r\n    y: 2.0860303818469492,\r\n    utcTimestamp: '2022-02-02T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 292309.28125,\r\n    y: -8.847192482364672,\r\n    utcTimestamp: '2022-02-03T00:00:00.0000000Z',\r\n  },\r\n  {\r\n    x: 293479.625,\r\n    y: 44.94728582327022,\r\n    utcTimestamp: '2022-02-04T00:00:00.0000000Z',\r\n  },\r\n]"
+                }
+            ],
             "src/environments/environment.prod.ts": [
                 {
                     "name": "environment",
@@ -702,9 +1679,357 @@
                     "type": "Story<Page>",
                     "defaultValue": "(args: Page) => ({\n  props: args,\n})"
                 }
+            ],
+            "src/shared/constants.ts": [
+                {
+                    "name": "MOMENT_SORTABLE",
+                    "ctype": "miscellaneous",
+                    "subtype": "variable",
+                    "file": "src/shared/constants.ts",
+                    "deprecated": false,
+                    "deprecationMessage": "",
+                    "type": "string",
+                    "defaultValue": "'YYYY-MM-DD HH:mm:ss'"
+                }
             ]
         },
-        "groupedFunctions": {},
+        "groupedFunctions": {
+            "src/shared/components/regression-chart/regression-chart.component.ts": [
+                {
+                    "name": "addSpaces",
+                    "file": "src/shared/components/regression-chart/regression-chart.component.ts",
+                    "ctype": "miscellaneous",
+                    "subtype": "function",
+                    "deprecated": false,
+                    "deprecationMessage": "",
+                    "description": "",
+                    "args": [
+                        {
+                            "name": "n",
+                            "type": "",
+                            "deprecated": false,
+                            "deprecationMessage": ""
+                        },
+                        {
+                            "name": "length",
+                            "type": "number",
+                            "deprecated": false,
+                            "deprecationMessage": ""
+                        },
+                        {
+                            "name": "space",
+                            "type": "string",
+                            "deprecated": false,
+                            "deprecationMessage": "",
+                            "defaultValue": "' '"
+                        }
+                    ],
+                    "jsdoctags": [
+                        {
+                            "name": "n",
+                            "type": "",
+                            "deprecated": false,
+                            "deprecationMessage": "",
+                            "tagName": {
+                                "text": "param"
+                            }
+                        },
+                        {
+                            "name": "length",
+                            "type": "number",
+                            "deprecated": false,
+                            "deprecationMessage": "",
+                            "tagName": {
+                                "text": "param"
+                            }
+                        },
+                        {
+                            "name": "space",
+                            "type": "string",
+                            "deprecated": false,
+                            "deprecationMessage": "",
+                            "defaultValue": "' '",
+                            "tagName": {
+                                "text": "param"
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "findLineByLeastSquares",
+                    "file": "src/shared/components/regression-chart/regression-chart.component.ts",
+                    "ctype": "miscellaneous",
+                    "subtype": "function",
+                    "deprecated": false,
+                    "deprecationMessage": "",
+                    "description": "",
+                    "args": [
+                        {
+                            "name": "values",
+                            "deprecated": false,
+                            "deprecationMessage": ""
+                        }
+                    ],
+                    "jsdoctags": [
+                        {
+                            "name": "values",
+                            "deprecated": false,
+                            "deprecationMessage": "",
+                            "tagName": {
+                                "text": "param"
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "getSpaces",
+                    "file": "src/shared/components/regression-chart/regression-chart.component.ts",
+                    "ctype": "miscellaneous",
+                    "subtype": "function",
+                    "deprecated": false,
+                    "deprecationMessage": "",
+                    "description": "",
+                    "args": [
+                        {
+                            "name": "n",
+                            "type": "",
+                            "deprecated": false,
+                            "deprecationMessage": ""
+                        },
+                        {
+                            "name": "length",
+                            "type": "number",
+                            "deprecated": false,
+                            "deprecationMessage": ""
+                        },
+                        {
+                            "name": "space",
+                            "type": "string",
+                            "deprecated": false,
+                            "deprecationMessage": "",
+                            "defaultValue": "' '"
+                        }
+                    ],
+                    "jsdoctags": [
+                        {
+                            "name": "n",
+                            "type": "",
+                            "deprecated": false,
+                            "deprecationMessage": "",
+                            "tagName": {
+                                "text": "param"
+                            }
+                        },
+                        {
+                            "name": "length",
+                            "type": "number",
+                            "deprecated": false,
+                            "deprecationMessage": "",
+                            "tagName": {
+                                "text": "param"
+                            }
+                        },
+                        {
+                            "name": "space",
+                            "type": "string",
+                            "deprecated": false,
+                            "deprecationMessage": "",
+                            "defaultValue": "' '",
+                            "tagName": {
+                                "text": "param"
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "join",
+                    "file": "src/shared/components/regression-chart/regression-chart.component.ts",
+                    "ctype": "miscellaneous",
+                    "subtype": "function",
+                    "deprecated": false,
+                    "deprecationMessage": "",
+                    "description": "",
+                    "args": [
+                        {
+                            "name": "x",
+                            "deprecated": false,
+                            "deprecationMessage": ""
+                        },
+                        {
+                            "name": "y",
+                            "deprecated": false,
+                            "deprecationMessage": ""
+                        }
+                    ],
+                    "jsdoctags": [
+                        {
+                            "name": "x",
+                            "deprecated": false,
+                            "deprecationMessage": "",
+                            "tagName": {
+                                "text": "param"
+                            }
+                        },
+                        {
+                            "name": "y",
+                            "deprecated": false,
+                            "deprecationMessage": "",
+                            "tagName": {
+                                "text": "param"
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "linear_regression",
+                    "file": "src/shared/components/regression-chart/regression-chart.component.ts",
+                    "ctype": "miscellaneous",
+                    "subtype": "function",
+                    "deprecated": false,
+                    "deprecationMessage": "",
+                    "description": "",
+                    "args": [
+                        {
+                            "name": "xyr",
+                            "deprecated": false,
+                            "deprecationMessage": ""
+                        }
+                    ],
+                    "jsdoctags": [
+                        {
+                            "name": "xyr",
+                            "deprecated": false,
+                            "deprecationMessage": "",
+                            "tagName": {
+                                "text": "param"
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "pointId",
+                    "file": "src/shared/components/regression-chart/regression-chart.component.ts",
+                    "ctype": "miscellaneous",
+                    "subtype": "function",
+                    "deprecated": false,
+                    "deprecationMessage": "",
+                    "description": "",
+                    "args": [
+                        {
+                            "name": "p",
+                            "type": "InputData",
+                            "deprecated": false,
+                            "deprecationMessage": ""
+                        }
+                    ],
+                    "jsdoctags": [
+                        {
+                            "name": "p",
+                            "type": "InputData",
+                            "deprecated": false,
+                            "deprecationMessage": "",
+                            "tagName": {
+                                "text": "param"
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "split",
+                    "file": "src/shared/components/regression-chart/regression-chart.component.ts",
+                    "ctype": "miscellaneous",
+                    "subtype": "function",
+                    "deprecated": false,
+                    "deprecationMessage": "",
+                    "description": "",
+                    "args": [
+                        {
+                            "name": "arr",
+                            "deprecated": false,
+                            "deprecationMessage": ""
+                        },
+                        {
+                            "name": "a",
+                            "deprecated": false,
+                            "deprecationMessage": ""
+                        },
+                        {
+                            "name": "b",
+                            "deprecated": false,
+                            "deprecationMessage": ""
+                        }
+                    ],
+                    "jsdoctags": [
+                        {
+                            "name": "arr",
+                            "deprecated": false,
+                            "deprecationMessage": "",
+                            "tagName": {
+                                "text": "param"
+                            }
+                        },
+                        {
+                            "name": "a",
+                            "deprecated": false,
+                            "deprecationMessage": "",
+                            "tagName": {
+                                "text": "param"
+                            }
+                        },
+                        {
+                            "name": "b",
+                            "deprecated": false,
+                            "deprecationMessage": "",
+                            "tagName": {
+                                "text": "param"
+                            }
+                        }
+                    ]
+                }
+            ],
+            "src/shared/lib/rxjs.utils.ts": [
+                {
+                    "name": "filterUndefined",
+                    "file": "src/shared/lib/rxjs.utils.ts",
+                    "ctype": "miscellaneous",
+                    "subtype": "function",
+                    "deprecated": false,
+                    "deprecationMessage": "",
+                    "description": "<p>Same as filter((x)=&gt; x !== undefined) except it will work better with TypeScript</p>\n",
+                    "args": [],
+                    "returnType": "Observable<NonNullable<T>>"
+                },
+                {
+                    "name": "formValues",
+                    "file": "src/shared/lib/rxjs.utils.ts",
+                    "ctype": "miscellaneous",
+                    "subtype": "function",
+                    "deprecated": false,
+                    "deprecationMessage": "",
+                    "description": "",
+                    "args": [
+                        {
+                            "name": "control",
+                            "type": "FormControl",
+                            "deprecated": false,
+                            "deprecationMessage": ""
+                        }
+                    ],
+                    "returnType": "Observable<any>",
+                    "jsdoctags": [
+                        {
+                            "name": "control",
+                            "type": "FormControl",
+                            "deprecated": false,
+                            "deprecationMessage": "",
+                            "tagName": {
+                                "text": "param"
+                            }
+                        }
+                    ]
+                }
+            ]
+        },
         "groupedEnumerations": {},
         "groupedTypeAliases": {}
     },
@@ -723,7 +2048,7 @@
         ]
     },
     "coverage": {
-        "count": 4,
+        "count": 5,
         "status": "low",
         "files": [
             {
@@ -751,6 +2076,134 @@
                 "linktype": "miscellaneous",
                 "linksubtype": "variable",
                 "name": "environment",
+                "coveragePercent": 0,
+                "coverageCount": "0/1",
+                "status": "low"
+            },
+            {
+                "filePath": "src/shared/components/regression-chart/regression-chart.component.ts",
+                "type": "component",
+                "linktype": "component",
+                "name": "RegressionChartComponent",
+                "coveragePercent": 0,
+                "coverageCount": "0/24",
+                "status": "low"
+            },
+            {
+                "filePath": "src/shared/components/regression-chart/regression-chart.component.ts",
+                "type": "interface",
+                "linktype": "interface",
+                "name": "InputData",
+                "coveragePercent": 0,
+                "coverageCount": "0/5",
+                "status": "low"
+            },
+            {
+                "filePath": "src/shared/components/regression-chart/regression-chart.component.ts",
+                "type": "function",
+                "linktype": "miscellaneous",
+                "linksubtype": "function",
+                "name": "addSpaces",
+                "coveragePercent": 0,
+                "coverageCount": "0/1",
+                "status": "low"
+            },
+            {
+                "filePath": "src/shared/components/regression-chart/regression-chart.component.ts",
+                "type": "function",
+                "linktype": "miscellaneous",
+                "linksubtype": "function",
+                "name": "findLineByLeastSquares",
+                "coveragePercent": 0,
+                "coverageCount": "0/1",
+                "status": "low"
+            },
+            {
+                "filePath": "src/shared/components/regression-chart/regression-chart.component.ts",
+                "type": "function",
+                "linktype": "miscellaneous",
+                "linksubtype": "function",
+                "name": "getSpaces",
+                "coveragePercent": 0,
+                "coverageCount": "0/1",
+                "status": "low"
+            },
+            {
+                "filePath": "src/shared/components/regression-chart/regression-chart.component.ts",
+                "type": "function",
+                "linktype": "miscellaneous",
+                "linksubtype": "function",
+                "name": "join",
+                "coveragePercent": 0,
+                "coverageCount": "0/1",
+                "status": "low"
+            },
+            {
+                "filePath": "src/shared/components/regression-chart/regression-chart.component.ts",
+                "type": "function",
+                "linktype": "miscellaneous",
+                "linksubtype": "function",
+                "name": "linear_regression",
+                "coveragePercent": 0,
+                "coverageCount": "0/1",
+                "status": "low"
+            },
+            {
+                "filePath": "src/shared/components/regression-chart/regression-chart.component.ts",
+                "type": "function",
+                "linktype": "miscellaneous",
+                "linksubtype": "function",
+                "name": "pointId",
+                "coveragePercent": 0,
+                "coverageCount": "0/1",
+                "status": "low"
+            },
+            {
+                "filePath": "src/shared/components/regression-chart/regression-chart.component.ts",
+                "type": "function",
+                "linktype": "miscellaneous",
+                "linksubtype": "function",
+                "name": "split",
+                "coveragePercent": 0,
+                "coverageCount": "0/1",
+                "status": "low"
+            },
+            {
+                "filePath": "src/shared/components/regression-chart/regression-chart.component.ts",
+                "type": "variable",
+                "linktype": "miscellaneous",
+                "linksubtype": "variable",
+                "name": "dataExample",
+                "coveragePercent": 0,
+                "coverageCount": "0/1",
+                "status": "low"
+            },
+            {
+                "filePath": "src/shared/constants.ts",
+                "type": "variable",
+                "linktype": "miscellaneous",
+                "linksubtype": "variable",
+                "name": "MOMENT_SORTABLE",
+                "coveragePercent": 0,
+                "coverageCount": "0/1",
+                "status": "low"
+            },
+            {
+                "filePath": "src/shared/lib/rxjs.utils.ts",
+                "type": "function",
+                "linktype": "miscellaneous",
+                "linksubtype": "function",
+                "name": "filterUndefined",
+                "coveragePercent": 100,
+                "coverageCount": "1/1",
+                "status": "very-good"
+            },
+            {
+                "filePath": "src/shared/lib/rxjs.utils.ts",
+                "type": "function",
+                "linktype": "miscellaneous",
+                "linksubtype": "function",
+                "name": "formValues",
                 "coveragePercent": 0,
                 "coverageCount": "0/1",
                 "status": "low"
